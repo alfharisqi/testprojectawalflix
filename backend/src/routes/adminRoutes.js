@@ -32,6 +32,8 @@ import {
 } from "../controllers/adminController.js";
 
 const router = express.Router();
+const maxCustomerServiceAttachmentSize = 2 * 1024 * 1024;
+const maxCustomerServiceAttachmentCount = 2;
 
 const adminUpload = multer({
   storage: multer.memoryStorage(),
@@ -54,10 +56,33 @@ const adminUpload = multer({
     cb(new Error("File harus berupa gambar, PDF, DOC, atau DOCX"), false);
   },
   limits: {
-    fileSize: 5 * 1024 * 1024,
-    files: 4,
+    fileSize: maxCustomerServiceAttachmentSize,
+    files: maxCustomerServiceAttachmentCount,
   },
 });
+
+const uploadCustomerServiceAttachments = (req, res, next) => {
+  adminUpload.array("attachments", maxCustomerServiceAttachmentCount)(req, res, (error) => {
+    if (!error) {
+      next();
+      return;
+    }
+
+    if (error instanceof multer.MulterError) {
+      const message =
+        error.code === "LIMIT_FILE_SIZE"
+          ? "Ukuran tiap lampiran maksimal 2 MB."
+          : error.code === "LIMIT_FILE_COUNT"
+            ? "Lampiran maksimal 2 file."
+            : "Lampiran customer service tidak valid.";
+
+      res.status(400).json({ message });
+      return;
+    }
+
+    res.status(400).json({ message: error.message || "Lampiran customer service tidak valid." });
+  });
+};
 
 router.get(
   "/dashboard",
@@ -140,7 +165,7 @@ router.post(
   "/customer-service/tickets/:id/messages",
   verifyToken,
   allowRoles("admin", "moderator"),
-  adminUpload.array("attachments", 4),
+  uploadCustomerServiceAttachments,
   addCustomerServiceMessage
 );
 

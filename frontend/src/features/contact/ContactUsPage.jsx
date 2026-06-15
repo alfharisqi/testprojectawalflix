@@ -38,6 +38,22 @@ const extraPrompts = {
   other: "Tambahkan informasi lain yang menurut kamu perlu diketahui tim FLIX.",
 };
 
+const maxAttachmentCount = 2;
+const maxAttachmentBytes = 2 * 1024 * 1024;
+const maxTotalAttachmentBytes = 3 * 1024 * 1024;
+const allowedAttachmentTypes = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/jpg",
+  "image/webp",
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+]);
+const allowedAttachmentExtensions = new Set(["jpg", "jpeg", "png", "webp", "pdf", "doc", "docx"]);
+
+const formatFileSize = (bytes) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+
 const getStoredUser = () => {
   try {
     return JSON.parse(localStorage.getItem("user"));
@@ -246,10 +262,60 @@ function ContactUsPage() {
     });
   };
 
+  const validateAttachmentFiles = (files) => {
+    if (files.length > maxAttachmentCount) {
+      return `Lampiran maksimal ${maxAttachmentCount} file.`;
+    }
+
+    const invalidTypeFile = files.find((file) => {
+      const extension = file.name.split(".").pop()?.toLowerCase() || "";
+      return !allowedAttachmentTypes.has(file.type) && !allowedAttachmentExtensions.has(extension);
+    });
+
+    if (invalidTypeFile) {
+      return "Lampiran harus berupa gambar, PDF, DOC, atau DOCX.";
+    }
+
+    const oversizedFile = files.find((file) => file.size > maxAttachmentBytes);
+
+    if (oversizedFile) {
+      return `Ukuran ${oversizedFile.name} melebihi ${formatFileSize(maxAttachmentBytes)}.`;
+    }
+
+    const totalSize = files.reduce((total, file) => total + file.size, 0);
+
+    if (totalSize > maxTotalAttachmentBytes) {
+      return `Total lampiran maksimal ${formatFileSize(maxTotalAttachmentBytes)}.`;
+    }
+
+    return "";
+  };
+
+  const handleChatFilesChange = (event) => {
+    const files = Array.from(event.target.files || []);
+    const validationMessage = validateAttachmentFiles(files);
+
+    if (validationMessage) {
+      setChatError(validationMessage);
+      setChatFiles([]);
+      event.target.value = "";
+      return;
+    }
+
+    setChatError("");
+    setChatFiles(files);
+  };
+
   const handleCreateTicket = async (event) => {
     event.preventDefault();
     const text = chatDraft.trim();
     const finalExtraInfo = text || extraInfo;
+    const validationMessage = validateAttachmentFiles(chatFiles);
+
+    if (validationMessage) {
+      setChatError(validationMessage);
+      return;
+    }
 
     try {
       setChatSaving(true);
@@ -282,7 +348,6 @@ function ContactUsPage() {
       const response = await axios.post(`${apiUrl}/api/customer-service/tickets`, formData, {
         headers: {
           ...getAuthHeaders(),
-          "Content-Type": "multipart/form-data",
         },
       });
 
@@ -311,6 +376,13 @@ function ContactUsPage() {
       return;
     }
 
+    const validationMessage = validateAttachmentFiles(chatFiles);
+
+    if (validationMessage) {
+      setChatError(validationMessage);
+      return;
+    }
+
     try {
       setChatSaving(true);
       setChatError("");
@@ -325,7 +397,6 @@ function ContactUsPage() {
         {
           headers: {
             ...getAuthHeaders(),
-            "Content-Type": "multipart/form-data",
           },
         },
       );
@@ -428,7 +499,7 @@ function ContactUsPage() {
                 type="file"
                 multiple
                 accept="image/png,image/jpeg,image/webp,application/pdf,.doc,.docx"
-                onChange={(event) => setChatFiles(Array.from(event.target.files || []))}
+                onChange={handleChatFilesChange}
               />
               Bukti
             </label>

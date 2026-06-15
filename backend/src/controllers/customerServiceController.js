@@ -172,7 +172,7 @@ const assertTicketAccess = (ticket, req) => {
   return { ok: false, status: 403, message: "Kamu tidak punya akses ke tiket ini" };
 };
 
-const insertAttachments = async ({ ticketId, messageId = null, userId, files = [] }) => {
+const insertAttachments = async ({ db = pool, ticketId, messageId = null, userId, files = [] }) => {
   if (!files.length) {
     return [];
   }
@@ -180,7 +180,7 @@ const insertAttachments = async ({ ticketId, messageId = null, userId, files = [
   const rows = [];
 
   for (const file of files) {
-    const result = await pool.query(
+    const result = await db.query(
       `INSERT INTO flix.customer_service_attachments
         (id_ticket, id_message, uploaded_by_user_id, file_url, file_name, file_type, file_size)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -283,16 +283,19 @@ export const createCustomerServiceTicket = async (req, res) => {
       [ticket.id, userId, description],
     );
 
-    await client.query("COMMIT");
-
     await insertAttachments({
+      db: client,
       ticketId: ticket.id,
       messageId: Number(userMessage.rows[0].id_message),
       userId,
       files: req.files || [],
     });
 
-    await notifyStaffNewTicket(pool, ticket);
+    await client.query("COMMIT");
+
+    notifyStaffNewTicket(pool, ticket).catch((error) => {
+      console.error("Gagal mengirim notifikasi tiket customer service:", error.message);
+    });
 
     const detailData = await getCustomerServiceTicketPayload(ticket.id);
 
@@ -375,6 +378,8 @@ export const getCustomerServiceTicketDetail = async (req, res) => {
 };
 
 export const addCustomerServiceMessage = async (req, res) => {
+  const client = await pool.connect();
+
   try {
     await initializeCustomerServiceTables();
 
@@ -406,7 +411,10 @@ export const addCustomerServiceMessage = async (req, res) => {
     }
 
     const senderType = ["admin", "moderator"].includes(role) ? role : "user";
-    const result = await pool.query(
+
+    await client.query("BEGIN");
+
+    const result = await client.query(
       `INSERT INTO flix.customer_service_messages
         (id_ticket, sender_user_id, sender_type, message)
        VALUES ($1, $2, $3, $4)
@@ -415,18 +423,21 @@ export const addCustomerServiceMessage = async (req, res) => {
     );
 
     await insertAttachments({
+      db: client,
       ticketId,
       messageId: Number(result.rows[0].id_message),
       userId: req.user.id_user,
       files: req.files || [],
     });
 
-    await pool.query(
+    await client.query(
       `UPDATE flix.customer_service_tickets
        SET updated_at = CURRENT_TIMESTAMP
        WHERE id_ticket = $1`,
       [ticketId],
     );
+
+    await client.query("COMMIT");
 
     const payload = await getCustomerServiceTicketPayload(ticketId);
 
@@ -435,10 +446,13 @@ export const addCustomerServiceMessage = async (req, res) => {
       ...payload,
     });
   } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
     return res.status(500).json({
       message: "Gagal mengirim pesan customer service",
       error: error.message,
     });
+  } finally {
+    client.release();
   }
 };
 
