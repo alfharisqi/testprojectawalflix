@@ -62,8 +62,7 @@ const getStoredUser = () => {
   }
 };
 
-const getAuthHeaders = () => {
-  const token = localStorage.getItem("token");
+const getAuthHeaders = (token) => {
   return token ? { Authorization: `Bearer ${token}` } : undefined;
 };
 
@@ -77,7 +76,7 @@ const createInitialBotMessages = () => [
 ];
 
 function ContactUsPage() {
-  const token = localStorage.getItem("token");
+  const [authToken, setAuthToken] = useState(() => localStorage.getItem("token") || "");
   const user = useMemo(() => getStoredUser(), []);
   const [activeView, setActiveView] = useState("form");
   const [form, setForm] = useState({
@@ -135,8 +134,27 @@ function ContactUsPage() {
     setChatError("");
   };
 
+  const clearExpiredSession = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    setAuthToken("");
+    setCurrentTicket(null);
+    setTicketMessages(createInitialBotMessages());
+    setTicketAttachments([]);
+    setChatStep("category");
+    setSelectedCategory(null);
+    setIssueDescription("");
+    setExtraInfo("");
+    setChatDraft("");
+    setChatFiles([]);
+  };
+
+  const isAuthError = (error) => {
+    return error.response?.status === 401 || error.response?.status === 403;
+  };
+
   useEffect(() => {
-    if (activeView !== "chat" || !token) {
+    if (activeView !== "chat" || !authToken) {
       return;
     }
 
@@ -144,8 +162,9 @@ function ContactUsPage() {
 
     const loadLatestTicket = async () => {
       try {
+        setChatError("");
         const response = await axios.get(`${apiUrl}/api/customer-service/tickets`, {
-          headers: getAuthHeaders(),
+          headers: getAuthHeaders(authToken),
         });
         const latestOpenTicket = response.data.tickets?.find((ticket) => ticket.status !== "done");
         const latestTicket = latestOpenTicket || response.data.tickets?.[0];
@@ -157,13 +176,19 @@ function ContactUsPage() {
         const detailResponse = await axios.get(
           `${apiUrl}/api/customer-service/tickets/${latestTicket.id}`,
           {
-            headers: getAuthHeaders(),
+            headers: getAuthHeaders(authToken),
           },
         );
         setTicketPayload(detailResponse.data);
         setChatStep("ticket");
-      } catch {
+      } catch (error) {
         if (isMounted) {
+          if (isAuthError(error)) {
+            clearExpiredSession();
+            setChatError("Sesi login sudah kedaluwarsa. Login ulang untuk membuka Customer Service.");
+            return;
+          }
+
           setChatError("Tiket customer service belum bisa dimuat.");
         }
       }
@@ -174,7 +199,7 @@ function ContactUsPage() {
     return () => {
       isMounted = false;
     };
-  }, [activeView, token]);
+  }, [activeView, authToken]);
 
   const handleChange = (event) => {
     const { name, value } = event.target;
@@ -198,7 +223,7 @@ function ContactUsPage() {
       setSuccessMessage("");
       setErrorMessage("");
       const response = await axios.post(`${apiUrl}/api/contact-us`, form, {
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        headers: getAuthHeaders(authToken),
       });
 
       setSuccessMessage(
@@ -321,15 +346,8 @@ function ContactUsPage() {
       setChatSaving(true);
       setChatError("");
 
-      if (!token) {
+      if (!authToken) {
         throw new Error("Login dulu untuk membuat tiket customer service.");
-      }
-
-      if (text) {
-        addLocalChatMessage({
-          senderType: "user",
-          message: text,
-        });
       }
 
       const formData = new FormData();
@@ -347,7 +365,7 @@ function ContactUsPage() {
 
       const response = await axios.post(`${apiUrl}/api/customer-service/tickets`, formData, {
         headers: {
-          ...getAuthHeaders(),
+          ...getAuthHeaders(authToken),
         },
       });
 
@@ -357,6 +375,12 @@ function ContactUsPage() {
       setExtraInfo("");
       setChatFiles([]);
     } catch (error) {
+      if (isAuthError(error)) {
+        clearExpiredSession();
+        setChatError("Sesi login sudah kedaluwarsa. Login ulang untuk membuat tiket Customer Service.");
+        return;
+      }
+
       setChatError(error.response?.data?.message || error.message || "Gagal membuat tiket.");
     } finally {
       setChatSaving(false);
@@ -396,7 +420,7 @@ function ContactUsPage() {
         formData,
         {
           headers: {
-            ...getAuthHeaders(),
+            ...getAuthHeaders(authToken),
           },
         },
       );
@@ -405,6 +429,12 @@ function ContactUsPage() {
       setChatDraft("");
       setChatFiles([]);
     } catch (error) {
+      if (isAuthError(error)) {
+        clearExpiredSession();
+        setChatError("Sesi login sudah kedaluwarsa. Login ulang untuk mengirim pesan Customer Service.");
+        return;
+      }
+
       setChatError(error.response?.data?.message || "Gagal mengirim pesan.");
     } finally {
       setChatSaving(false);
@@ -433,7 +463,7 @@ function ContactUsPage() {
   };
 
   const renderChatInput = () => {
-    if (!token) {
+    if (!authToken) {
       return (
         <div className="contact-chatroom__readonly">
           Login dulu untuk membuat tiket dan chat dengan Customer Service.

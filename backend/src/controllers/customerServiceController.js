@@ -243,6 +243,10 @@ export const createCustomerServiceTicket = async (req, res) => {
     const description = String(req.body?.description || "").trim();
     const subject = String(req.body?.subject || categoryLabels[category] || "Customer Service").trim();
     const detail = parseDetail(req.body?.detail);
+    const extraInfo = String(detail?.extraInfo || "").trim();
+    const userMessageText = extraInfo
+      ? `${description}\n\nInformasi tambahan: ${extraInfo}`
+      : description;
 
     if (!allowedCategories.has(category)) {
       return res.status(400).json({ message: "Kategori customer service tidak valid" });
@@ -280,7 +284,7 @@ export const createCustomerServiceTicket = async (req, res) => {
         (id_ticket, sender_user_id, sender_type, message)
        VALUES ($1, $2, 'user', $3)
        RETURNING *`,
-      [ticket.id, userId, description],
+      [ticket.id, userId, userMessageText],
     );
 
     await insertAttachments({
